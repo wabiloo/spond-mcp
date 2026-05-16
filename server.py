@@ -141,6 +141,9 @@ class BearerAuthMiddleware:
             headers = dict(scope.get("headers", []))
             auth = headers.get(b"authorization", b"").decode()
             token = auth.removeprefix("Bearer ").strip()
+            if not token:
+                qs = dict(p.split("=", 1) for p in scope.get("query_string", b"").decode().split("&") if "=" in p)
+                token = qs.get("token", "")
             if not token or not secrets.compare_digest(token.encode(), self.api_key.encode()):
                 response = Response("Unauthorized", status_code=401)
                 await response(scope, receive, send)
