@@ -1,11 +1,15 @@
 import os
 import secrets
 
+from dotenv import load_dotenv
 import uvicorn
-from fastapi import FastAPI, Request
-from fastapi.responses import Response
 from mcp.server.fastmcp import FastMCP
 from spond.spond import Spond
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.types import ASGIApp, Receive, Scope, Send
+
+load_dotenv()
 
 API_KEY = os.environ["API_KEY"]
 SPOND_USERNAME = os.environ["SPOND_USERNAME"]
@@ -50,18 +54,19 @@ async def list_members(group_id: str) -> str:
 
 
 @mcp.tool()
-async def send_group_message(group_id: str, text: str) -> str:
+async def send_group_message(group_id: str, title: str, text: str) -> str:
     """Post a message to a Spond group wall (visible to all members).
 
     Args:
         group_id: The group ID (from list_groups)
-        text: The message text to post
+        title: Post title/subject (max 60 characters)
+        text: The message body text
     """
     s = Spond(username=SPOND_USERNAME, password=SPOND_PASSWORD)
     try:
         await s.login()
         url = f"{s.api_url}posts/"
-        data = {"groupId": group_id, "text": text, "type": "PLAIN"}
+        data = {"groupId": group_id, "title": title[:60], "body": text, "type": "PLAIN"}
         async with s.clientsession.post(url, json=data, headers=s.auth_headers) as r:
             if r.status not in (200, 201):
                 body = await r.text()
@@ -122,19 +127,24 @@ async def send_message(group_id: str, user: str, text: str) -> str:
     return "Message sent."
 
 
-app = FastAPI()
+class BearerAuthMiddleware:
+    def __init__(self, app: ASGIApp, api_key: str) -> None:
+        self.app = app
+        self.api_key = api_key
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            headers = dict(scope.get("headers", []))
+            auth = headers.get(b"authorization", b"").decode()
+            token = auth.removeprefix("Bearer ").strip()
+            if not token or not secrets.compare_digest(token.encode(), self.api_key.encode()):
+                response = Response("Unauthorized", status_code=401)
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
 
 
-@app.middleware("http")
-async def require_bearer(request: Request, call_next):
-    auth = request.headers.get("Authorization", "")
-    token = auth.removeprefix("Bearer ").strip()
-    if not token or not secrets.compare_digest(token.encode(), API_KEY.encode()):
-        return Response("Unauthorized", status_code=401)
-    return await call_next(request)
-
-
-app.mount("/", mcp.sse_app())
+app = BearerAuthMiddleware(mcp.streamable_http_app(), API_KEY)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
