@@ -4,6 +4,7 @@ import secrets
 from dotenv import load_dotenv
 import uvicorn
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from spond.spond import Spond
 from starlette.requests import Request
 from starlette.responses import Response
@@ -15,7 +16,10 @@ API_KEY = os.environ["API_KEY"]
 SPOND_USERNAME = os.environ["SPOND_USERNAME"]
 SPOND_PASSWORD = os.environ["SPOND_PASSWORD"]
 
-mcp = FastMCP("Spond")
+mcp = FastMCP(
+    "Spond",
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+)
 
 
 @mcp.tool()
